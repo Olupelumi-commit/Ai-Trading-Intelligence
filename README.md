@@ -35,3 +35,158 @@ state with a reason — never a zero, a guess or a blank chart.
 
 ## Architecture in one pass
 
+```
+market data ─→ strategy ─→ confluence ─→ risk ──┐
+   (shared)     (pure)      (pure)      (pure)  │
+                                                ├─→ research.simulation  ← the one execution model
+                                                │        ↑            ↑
+                                                │   research.evaluation │ paper.lifecycle
+                                                │      (batch)          │  (incremental)
+                                                ▼                       │
+                                          pawo.services ────────────────┘
+                                                │
+                    ┌───────────────────────────┼───────────────────────────┐
+                    ▼                           ▼                           ▼
+             REST /api/v1/app            MCP (13 tools)          REST /api/v1/automation
+              user token, GET-only        user token             workspace service credential
+```
+
+- The deterministic engine (`strategy`, `confluence`, `risk`, `market`, `research`, `ai`) never
+  imports a service, a transport or the paper subsystem. Architectural tests enforce the direction.
+- **One execution model.** `research.simulation.simulate_trade` is the only code that turns a
+  decision and candles into an outcome. Exactly two drivers call it: the batch driver in
+  `research.evaluation` and the incremental driver in `paper.lifecycle`.
+- Every transport is a projection over `pawo.services`. Where REST and MCP answer the same
+  question, a test compares the two answers field by field.
+
+## Multi-tenancy
+
+Two boundaries, always both. Every query against a tenant-scoped table filters on `tenant_id`
+explicitly **and** runs inside a `tenant_transaction` under forced PostgreSQL row-level security.
+The tenant is never taken from client input: the application API accepts no tenant identifier at
+all, and derives it from the caller's own memberships.
+
+A resource outside the caller's tenant is `404`, indistinguishable from one that does not exist. A
+resource inside their tenant that their role forbids is `403`. Roles are tenant-scoped and apply in
+every workspace of that tenant.
+
+The application role is deliberately weak: it is not the schema owner, holds no `BYPASSRLS`, cannot
+read the audit trail, and cannot write a research run. Where a read needs something the role must
+not hold in general, it goes through a `SECURITY DEFINER` function with an explicit `EXECUTE` grant
+rather than a wider privilege.
+
+## Getting started
+
+Requires **Python 3.12+** and **PostgreSQL 13+** (the migrations use the built-in `gen_random_uuid`).
+
+```bash
+make install                      # editable install with dev extras
+cp .env.example .env              # then fill it in
+make db-setup                     # creates the dev roles (psql, superuser)
+make migrate                      # alembic upgrade head, as the migration role
+make run                          # uvicorn pawo.main:app --reload
+```
+
+Separate database roles, with separate credentials, are not optional:
+
+| Role | Purpose |
+| --- | --- |
+| `pawo_app` | the application. Subject to RLS, not the owner, no `BYPASSRLS`. |
+| `pawo_migration` | schema owner; Alembic only, never the API. |
+| `pawo_ingest` | writes shared market-reference tables only. |
+| `pawo_research_publisher` | optional; `EXECUTE` on `research_publish` and no table `INSERT`. |
+
+Running the application as the owner would silently disable the second isolation boundary in
+production while every test on a correctly configured machine kept passing. Verify the deployment,
+don't assume it.
+
+## Operator commands
+
+There is no self-service registration, no password reset endpoint and no web path that creates a
+credential, a declaration or a research run. Those are operator acts:
+
+```bash
+python -m pawo.auth.provision --email someone@example.com        # set a password
+python -m pawo.automation.provision create --tenant T --workspace W --name n8n-staging
+python -m pawo.paper.provision contract|profile|model|enable|kill-switch
+python -m pawo.research.publish --tenant T --workspace W --report study.json
+python -m pawo.automation.n8n build|render --environment X|validate
+PAWO_MCP_ACCESS_TOKEN=... python -m pawo.mcp.stdio               # MCP over stdio, local dev
+```
+
+Every paper-trading declaration is versioned: a new one supersedes the active row and the old
+version stays, so a trade computed under it stays reproducible. `publish` requires a publisher
+credential (`PAWO_RESEARCH_DATABASE_URL` or the migration credential) — pointing it at
+`DATABASE_URL` fails rather than escalating.
+
+## Tests
+
+```bash
+make test        # unit tests; integration tests skip without a database
+make check       # lint + strict types + tests
+```
+
+Integration tests need a real PostgreSQL, because row-level security cannot be simulated. They skip
+unless these are set:
+
+```bash
+export PAWO_TEST_DATABASE_URL=...            # pawo_app — subject to RLS
+export PAWO_TEST_OWNER_DATABASE_URL=...      # pawo_migration — proves FORCE RLS binds the owner
+export PAWO_TEST_SUPERUSER_DATABASE_URL=...  # fixtures only
+export PAWO_TEST_PUBLISHER_DATABASE_URL=...  # optional; the research publisher role
+```
+
+The live n8n suite additionally needs Docker and the pinned n8n image, and skips without them.
+
+Beyond the usual unit and integration coverage, the suite asserts architectural properties directly:
+layering and import direction, that the paper kernel is pure and owns no price rule, that no
+mutating verb exists under `/api/v1/app/*`, that REST and MCP project identical values, that the
+application role cannot read `system_events`, and that no file names or mentions a reference
+repository.
+
+## Layout
+
+```
+src/pawo/
+  strategy/ confluence/ risk/         the deterministic engine — pure, no I/O
+  market/                             ingestion, quality, provider protocol, adapters
+  research/                           protocol, simulation, walk-forward, statistics, store
+  ai/                                 context, prompt, provider, verification
+  paper/                              lifecycle kernel, model, repository, provisioning
+  services/                           transport-neutral reads: one answer, many surfaces
+  api/                                FastAPI app; routers/app is the Phase 10a read surface
+  mcp/                                MCP server, 13 tools, all read-only
+  automation/                         service-credential API, ledger, n8n artifacts
+  auth/ db/                           identity, capabilities, audit, tenancy, models
+migrations/versions/                   0001–0011
+automation/n8n/                        generated workflow JSON, validated by test
+Pawo App/docs/                         the specifications this code implements
+Pawo App/docs/architecture/            ADR-0001 MCP · 0002 automation · 0003 paper · 0004 dashboard
+Pawo App/reports/                      per-phase completion reports
+```
+
+`Pawo App/DOCUMENT_INDEX.md` is the map. The specifications are authoritative: where code and a
+document disagree, one of them is a bug, and the completion reports say which.
+
+## Status
+
+| Phase | State |
+| --- | --- |
+| 1–6 | Foundations, market data, strategy, confluence/risk, research, AI reasoning — complete |
+| 7 | MCP server — complete |
+| 8 | n8n automation — complete |
+| 9 | Paper trading — complete |
+| 10a | User-facing application API — complete; `/app/setups` and `/app/interpretations` await owner decision W-4 |
+| 10b | Dashboard frontend — not begun; awaits W-8 and acceptance of 10a |
+
+Gate C remains unresolved, so nothing here is cleared for release.
+
+## Licence and provenance
+
+No source from OpenAlgo, Hinto Trader or QuantDash has been read for, or copied into, any phase.
+Clean-room implementation is the engineering policy; `references/` is untouched by implementation
+work. OpenAlgo is AGPL-3.0 and QuantDash's licensing is unresolved — legal review is required before
+releasing anything that relies on OpenAlgo-derived patterns. See `Pawo App/THIRD_PARTY_NOTICES.md`
+and `Pawo App/docs/28_REPOSITORY_PROVENANCE_AND_REUSE.md`.
+
+Nothing in this repository is financial advice, and no output of it is an instruction to trade.
