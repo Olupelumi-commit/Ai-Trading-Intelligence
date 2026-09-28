@@ -1,0 +1,449 @@
+{
+  "active": false,
+  "connections": {
+    "Analysis ok?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Interpretation request",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Failure response",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Analysis request": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Run analysis",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Analysis webhook": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Validate event",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Failure response": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Respond failure",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Interpret?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Run interpretation",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Success response",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Interpretation request": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Interpret?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Run analysis": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Analysis ok?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Run interpretation": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Success response",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Success response": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Respond",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Analysis request",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Failure response",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Validate event": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Valid?",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "id": "pawoN8n001Analy",
+  "meta": {
+    "instanceId": "pawo-phase-8"
+  },
+  "name": "PAWO-N8N-001-OnDemandAnalysis",
+  "nodes": [
+    {
+      "credentials": {
+        "jwtAuth": {
+          "id": "pawoJwtCredLive",
+          "name": "PAWO Webhook JWT"
+        }
+      },
+      "id": "afda8f2f-9a8e-5991-a4c4-d12f71b84877",
+      "name": "Analysis webhook",
+      "notes": "JWT auth (HS256): the node verifies signature and expiry before the workflow runs.",
+      "parameters": {
+        "authentication": "jwtAuth",
+        "httpMethod": "POST",
+        "options": {
+          "ignoreBots": true
+        },
+        "path": "pawo-analysis-dbg",
+        "responseMode": "responseNode"
+      },
+      "position": [
+        0,
+        0
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1
+    },
+    {
+      "id": "e85aa383-af60-5dc1-a341-5aab258fc822",
+      "name": "Validate event",
+      "parameters": {
+        "jsCode": "// PAWO n8n shared helpers (prepended to every Code node by `python -m pawo.automation.n8n build`).\n//\n// Orchestration only: identifiers, envelope validation, idempotency keys, error classification and\n// presentation. No ICT, SMC, SMT, CRT, price-action, confluence, risk or qualification logic \u2014 those\n// live in Python and reach the workflow only as deterministic fields of a PAWO response.\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst SYMBOL = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;\nconst SETUP_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;\nconst CORRELATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;\nconst MAX_EVENT_BYTES = 8192;\nconst MAX_CLOCK_SKEW_SECONDS = 300;\nconst EVENT_SCHEMA_VERSION = 'pawo-event-1';\n\n// The only paths any workflow may call. An SSRF guard: the host comes from configuration and the\n// path from this list, never from a payload.\nconst PAWO_PATHS = [\n  '/api/v1/automation/watchlist',\n  '/api/v1/automation/analyses',\n  '/api/v1/automation/setups/verify',\n  '/api/v1/automation/interpretations',\n  '/api/v1/automation/ledger/claims',\n  '/api/v1/automation/ledger/completions',\n  '/api/v1/automation/ledger/sweeps',\n  '/api/v1/automation/ledger/unresolved',\n  '/api/v1/automation/ledger/replays',\n  '/api/v1/automation/failures',\n  '/api/v1/automation/reports/daily',\n  '/api/v1/automation/outcomes/open',\n  '/api/v1/automation/outcomes/updates',\n  '/api/v1/automation/health',\n];\n\nfunction isUuid(value) {\n  return typeof value === 'string' && UUID.test(value);\n}\n\nfunction text(value, pattern, max) {\n  return typeof value === 'string' && value.length <= max && pattern.test(value);\n}\n\nfunction correlationId(supplied, fallback) {\n  // A caller-supplied id is used only after validation; it is for tracing, never authorization.\n  return text(supplied, CORRELATION, 128) ? supplied : `n8n-${fallback}`;\n}\n\nfunction bucket(when, minutes) {\n  const at = new Date(when);\n  const size = minutes * 60000;\n  return new Date(Math.floor(at.getTime() / size) * size).toISOString().replace(/[:.]/g, '-');\n}\n\nfunction idempotencyKey(parts) {\n  const key = parts.filter((p) => p !== null && p !== undefined && p !== '').join(':');\n  return key.slice(0, 200);\n}\n\nfunction withinSkew(occurredAt, now) {\n  const at = Date.parse(occurredAt);\n  if (Number.isNaN(at)) return false;\n  return Math.abs(new Date(now).getTime() - at) <= MAX_CLOCK_SKEW_SECONDS * 1000;\n}\n\n// Validates the documented envelope and its binding to the verified JWT. The token is already\n// signature- and expiry-checked by the Webhook node; this rejects an envelope the token does not\n// cover, and a token without the claims PAWO issues.\nfunction validateEnvelope(item, expectedType, now) {\n  const body = item.body;\n  const claims = item.jwtPayload || {};\n  const reject = (reason) => ({ valid: false, reason });\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('malformed_json');\n  if (JSON.stringify(body).length > MAX_EVENT_BYTES) return reject('payload_too_large');\n  if (body.schema_version !== EVENT_SCHEMA_VERSION) return reject('unsupported_schema_version');\n  if (!isUuid(body.event_id)) return reject('invalid_event_id');\n  if (body.event_type !== expectedType) return reject('unexpected_event_type');\n  if (!withinSkew(body.occurred_at, now)) return reject('stale_or_future_event');\n  const data = body.data;\n  if (!data || typeof data !== 'object') return reject('missing_data');\n  if (!text(data.symbol, SYMBOL, 32)) return reject('invalid_symbol');\n  if (data.setup_id !== undefined && data.setup_id !== null && !text(data.setup_id, SETUP_ID, 128))\n    return reject('invalid_setup_id');\n  if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return reject('token_claims_missing');\n  if (claims.exp - claims.iat > MAX_CLOCK_SKEW_SECONDS) return reject('token_lifetime_too_long');\n  if (claims.jti !== body.event_id) return reject('token_event_mismatch');\n  if (claims.evt !== body.event_type) return reject('token_type_mismatch');\n  const subject = data.setup_id || data.symbol;\n  if (claims.sub !== subject) return reject('token_subject_mismatch');\n  return {\n    valid: true,\n    reason: 'ok',\n    event_id: body.event_id,\n    event_type: body.event_type,\n    symbol: data.symbol,\n    setup_id: data.setup_id || null,\n    occurred_at: body.occurred_at,\n  };\n}\n\n// Maps an HTTP outcome to a retry class. Transient failures may recover; permanent ones never do\n// and are not retried. Anything unrecognised fails closed as `unknown`, which is not retried.\nfunction classifyStatus(status, code) {\n  if (status >= 200 && status < 300) return { classification: 'ok', error_code: null };\n  if (status === 429) return { classification: 'transient', error_code: 'RATE_LIMITED' };\n  if (status === 408 || status === 425) return { classification: 'transient', error_code: 'TIMEOUT' };\n  if (status === 502 || status === 503 || status === 504)\n    return { classification: 'transient', error_code: code || 'DEPENDENCY_UNAVAILABLE' };\n  if (status === 500) return { classification: 'transient', error_code: 'INTERNAL_ERROR' };\n  if (status >= 400 && status < 500)\n    return { classification: 'permanent', error_code: code || 'REQUEST_REJECTED' };\n  return { classification: 'unknown', error_code: code || 'UNEXPECTED_STATUS' };\n}\n\nconst SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;\n\n// Error codes leave PAWO already safe; anything else is reduced to a label. No message text,\n// stack trace, URL, header or credential is ever propagated.\nfunction safeCode(value, fallback) {\n  if (typeof value === 'string' && SAFE_ERROR_CODE.test(value)) return value;\n  return fallback;\n}\n\nfunction backoffSeconds(attempt, base, cap, retryAfter) {\n  if (typeof retryAfter === 'number' && retryAfter > 0) return Math.min(retryAfter, cap);\n  return Math.min(base * Math.pow(2, Math.max(0, attempt - 1)), cap);\n}\n\nfunction summaryOf(analysis) {\n  // Presentation only: counts and identifiers the deterministic response already contains.\n  const decisions = Array.isArray(analysis.decisions) ? analysis.decisions : [];\n  return {\n    analysis_id: analysis.analysis_id || null,\n    symbol: analysis.symbol || null,\n    status: analysis.status || null,\n    decision_count: decisions.length,\n    alertable: decisions.filter((d) => d.alertable === true).map((d) => d.setup_id),\n  };\n}\n\n// N8N-001 step 1: validate the delivery before anything else happens. The Webhook node has already\n// verified the JWT signature and expiry; this checks the envelope, its binding to that token, the\n// payload size and the clock, then derives the correlation id and idempotency key.\nconst item = $input.first().json;\nconst now = new Date().toISOString();\nconst verdict = validateEnvelope(item, 'pawo.analysis.requested', now);\nif (!verdict.valid) {\n  return [{ json: { valid: false, reason: verdict.reason, received_at: now } }];\n}\nconst headers = item.headers || {};\nreturn [\n  {\n    json: {\n      ...verdict,\n      received_at: now,\n      correlation_id: correlationId(headers['x-correlation-id'], verdict.event_id),\n      idempotency_key: idempotencyKey(['n8n-001', 'analysis', verdict.event_id]),\n    },\n  },\n];\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        220,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "0f14d35a-910d-59d5-a462-b4a4084b2630",
+      "name": "Valid?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "7e364ceb-551a-587a-a671-738d9d36a052",
+              "leftValue": "={{ $json.valid }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      },
+      "position": [
+        440,
+        0
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2
+    },
+    {
+      "id": "063852c6-5751-56fa-a493-a232e110cd2c",
+      "name": "Analysis request",
+      "parameters": {
+        "jsCode": "// PAWO n8n shared helpers (prepended to every Code node by `python -m pawo.automation.n8n build`).\n//\n// Orchestration only: identifiers, envelope validation, idempotency keys, error classification and\n// presentation. No ICT, SMC, SMT, CRT, price-action, confluence, risk or qualification logic \u2014 those\n// live in Python and reach the workflow only as deterministic fields of a PAWO response.\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst SYMBOL = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;\nconst SETUP_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;\nconst CORRELATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;\nconst MAX_EVENT_BYTES = 8192;\nconst MAX_CLOCK_SKEW_SECONDS = 300;\nconst EVENT_SCHEMA_VERSION = 'pawo-event-1';\n\n// The only paths any workflow may call. An SSRF guard: the host comes from configuration and the\n// path from this list, never from a payload.\nconst PAWO_PATHS = [\n  '/api/v1/automation/watchlist',\n  '/api/v1/automation/analyses',\n  '/api/v1/automation/setups/verify',\n  '/api/v1/automation/interpretations',\n  '/api/v1/automation/ledger/claims',\n  '/api/v1/automation/ledger/completions',\n  '/api/v1/automation/ledger/sweeps',\n  '/api/v1/automation/ledger/unresolved',\n  '/api/v1/automation/ledger/replays',\n  '/api/v1/automation/failures',\n  '/api/v1/automation/reports/daily',\n  '/api/v1/automation/outcomes/open',\n  '/api/v1/automation/outcomes/updates',\n  '/api/v1/automation/health',\n];\n\nfunction isUuid(value) {\n  return typeof value === 'string' && UUID.test(value);\n}\n\nfunction text(value, pattern, max) {\n  return typeof value === 'string' && value.length <= max && pattern.test(value);\n}\n\nfunction correlationId(supplied, fallback) {\n  // A caller-supplied id is used only after validation; it is for tracing, never authorization.\n  return text(supplied, CORRELATION, 128) ? supplied : `n8n-${fallback}`;\n}\n\nfunction bucket(when, minutes) {\n  const at = new Date(when);\n  const size = minutes * 60000;\n  return new Date(Math.floor(at.getTime() / size) * size).toISOString().replace(/[:.]/g, '-');\n}\n\nfunction idempotencyKey(parts) {\n  const key = parts.filter((p) => p !== null && p !== undefined && p !== '').join(':');\n  return key.slice(0, 200);\n}\n\nfunction withinSkew(occurredAt, now) {\n  const at = Date.parse(occurredAt);\n  if (Number.isNaN(at)) return false;\n  return Math.abs(new Date(now).getTime() - at) <= MAX_CLOCK_SKEW_SECONDS * 1000;\n}\n\n// Validates the documented envelope and its binding to the verified JWT. The token is already\n// signature- and expiry-checked by the Webhook node; this rejects an envelope the token does not\n// cover, and a token without the claims PAWO issues.\nfunction validateEnvelope(item, expectedType, now) {\n  const body = item.body;\n  const claims = item.jwtPayload || {};\n  const reject = (reason) => ({ valid: false, reason });\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('malformed_json');\n  if (JSON.stringify(body).length > MAX_EVENT_BYTES) return reject('payload_too_large');\n  if (body.schema_version !== EVENT_SCHEMA_VERSION) return reject('unsupported_schema_version');\n  if (!isUuid(body.event_id)) return reject('invalid_event_id');\n  if (body.event_type !== expectedType) return reject('unexpected_event_type');\n  if (!withinSkew(body.occurred_at, now)) return reject('stale_or_future_event');\n  const data = body.data;\n  if (!data || typeof data !== 'object') return reject('missing_data');\n  if (!text(data.symbol, SYMBOL, 32)) return reject('invalid_symbol');\n  if (data.setup_id !== undefined && data.setup_id !== null && !text(data.setup_id, SETUP_ID, 128))\n    return reject('invalid_setup_id');\n  if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return reject('token_claims_missing');\n  if (claims.exp - claims.iat > MAX_CLOCK_SKEW_SECONDS) return reject('token_lifetime_too_long');\n  if (claims.jti !== body.event_id) return reject('token_event_mismatch');\n  if (claims.evt !== body.event_type) return reject('token_type_mismatch');\n  const subject = data.setup_id || data.symbol;\n  if (claims.sub !== subject) return reject('token_subject_mismatch');\n  return {\n    valid: true,\n    reason: 'ok',\n    event_id: body.event_id,\n    event_type: body.event_type,\n    symbol: data.symbol,\n    setup_id: data.setup_id || null,\n    occurred_at: body.occurred_at,\n  };\n}\n\n// Maps an HTTP outcome to a retry class. Transient failures may recover; permanent ones never do\n// and are not retried. Anything unrecognised fails closed as `unknown`, which is not retried.\nfunction classifyStatus(status, code) {\n  if (status >= 200 && status < 300) return { classification: 'ok', error_code: null };\n  if (status === 429) return { classification: 'transient', error_code: 'RATE_LIMITED' };\n  if (status === 408 || status === 425) return { classification: 'transient', error_code: 'TIMEOUT' };\n  if (status === 502 || status === 503 || status === 504)\n    return { classification: 'transient', error_code: code || 'DEPENDENCY_UNAVAILABLE' };\n  if (status === 500) return { classification: 'transient', error_code: 'INTERNAL_ERROR' };\n  if (status >= 400 && status < 500)\n    return { classification: 'permanent', error_code: code || 'REQUEST_REJECTED' };\n  return { classification: 'unknown', error_code: code || 'UNEXPECTED_STATUS' };\n}\n\nconst SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;\n\n// Error codes leave PAWO already safe; anything else is reduced to a label. No message text,\n// stack trace, URL, header or credential is ever propagated.\nfunction safeCode(value, fallback) {\n  if (typeof value === 'string' && SAFE_ERROR_CODE.test(value)) return value;\n  return fallback;\n}\n\nfunction backoffSeconds(attempt, base, cap, retryAfter) {\n  if (typeof retryAfter === 'number' && retryAfter > 0) return Math.min(retryAfter, cap);\n  return Math.min(base * Math.pow(2, Math.max(0, attempt - 1)), cap);\n}\n\nfunction summaryOf(analysis) {\n  // Presentation only: counts and identifiers the deterministic response already contains.\n  const decisions = Array.isArray(analysis.decisions) ? analysis.decisions : [];\n  return {\n    analysis_id: analysis.analysis_id || null,\n    symbol: analysis.symbol || null,\n    status: analysis.status || null,\n    decision_count: decisions.length,\n    alertable: decisions.filter((d) => d.alertable === true).map((d) => d.setup_id),\n  };\n}\n\n// N8N-001 step 2: the PAWO analysis call. The workflow sends the symbol and its keys only; every\n// strategy input, threshold and decision belongs to PAWO.\nconst request = $input.first().json;\nreturn [\n  {\n    json: {\n      method: 'POST',\n      path: '/api/v1/automation/analyses',\n      body: { symbol: request.symbol },\n      idempotency_key: request.idempotency_key,\n      correlation_id: request.correlation_id,\n      workflow_id: 'N8N-001',\n      event_id: request.event_id,\n      setup_id: request.setup_id,\n    },\n  },\n];\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        660,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "c9fdf67a-f70f-5b00-92f7-35be1d42578a",
+      "name": "Run analysis",
+      "parameters": {
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "pawoLibCall00001"
+        }
+      },
+      "position": [
+        880,
+        0
+      ],
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3
+    },
+    {
+      "id": "dd4254a4-2ad1-5f6d-98f2-e70e49efca5f",
+      "name": "Analysis ok?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "a9aa04e7-a205-540a-9870-d881b75979d4",
+              "leftValue": "={{ $json.ok }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      },
+      "position": [
+        1100,
+        0
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2
+    },
+    {
+      "id": "864324a3-02ec-5c88-ae19-8db727cd861a",
+      "name": "Interpretation request",
+      "parameters": {
+        "jsCode": "// PAWO n8n shared helpers (prepended to every Code node by `python -m pawo.automation.n8n build`).\n//\n// Orchestration only: identifiers, envelope validation, idempotency keys, error classification and\n// presentation. No ICT, SMC, SMT, CRT, price-action, confluence, risk or qualification logic \u2014 those\n// live in Python and reach the workflow only as deterministic fields of a PAWO response.\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst SYMBOL = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;\nconst SETUP_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;\nconst CORRELATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;\nconst MAX_EVENT_BYTES = 8192;\nconst MAX_CLOCK_SKEW_SECONDS = 300;\nconst EVENT_SCHEMA_VERSION = 'pawo-event-1';\n\n// The only paths any workflow may call. An SSRF guard: the host comes from configuration and the\n// path from this list, never from a payload.\nconst PAWO_PATHS = [\n  '/api/v1/automation/watchlist',\n  '/api/v1/automation/analyses',\n  '/api/v1/automation/setups/verify',\n  '/api/v1/automation/interpretations',\n  '/api/v1/automation/ledger/claims',\n  '/api/v1/automation/ledger/completions',\n  '/api/v1/automation/ledger/sweeps',\n  '/api/v1/automation/ledger/unresolved',\n  '/api/v1/automation/ledger/replays',\n  '/api/v1/automation/failures',\n  '/api/v1/automation/reports/daily',\n  '/api/v1/automation/outcomes/open',\n  '/api/v1/automation/outcomes/updates',\n  '/api/v1/automation/health',\n];\n\nfunction isUuid(value) {\n  return typeof value === 'string' && UUID.test(value);\n}\n\nfunction text(value, pattern, max) {\n  return typeof value === 'string' && value.length <= max && pattern.test(value);\n}\n\nfunction correlationId(supplied, fallback) {\n  // A caller-supplied id is used only after validation; it is for tracing, never authorization.\n  return text(supplied, CORRELATION, 128) ? supplied : `n8n-${fallback}`;\n}\n\nfunction bucket(when, minutes) {\n  const at = new Date(when);\n  const size = minutes * 60000;\n  return new Date(Math.floor(at.getTime() / size) * size).toISOString().replace(/[:.]/g, '-');\n}\n\nfunction idempotencyKey(parts) {\n  const key = parts.filter((p) => p !== null && p !== undefined && p !== '').join(':');\n  return key.slice(0, 200);\n}\n\nfunction withinSkew(occurredAt, now) {\n  const at = Date.parse(occurredAt);\n  if (Number.isNaN(at)) return false;\n  return Math.abs(new Date(now).getTime() - at) <= MAX_CLOCK_SKEW_SECONDS * 1000;\n}\n\n// Validates the documented envelope and its binding to the verified JWT. The token is already\n// signature- and expiry-checked by the Webhook node; this rejects an envelope the token does not\n// cover, and a token without the claims PAWO issues.\nfunction validateEnvelope(item, expectedType, now) {\n  const body = item.body;\n  const claims = item.jwtPayload || {};\n  const reject = (reason) => ({ valid: false, reason });\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('malformed_json');\n  if (JSON.stringify(body).length > MAX_EVENT_BYTES) return reject('payload_too_large');\n  if (body.schema_version !== EVENT_SCHEMA_VERSION) return reject('unsupported_schema_version');\n  if (!isUuid(body.event_id)) return reject('invalid_event_id');\n  if (body.event_type !== expectedType) return reject('unexpected_event_type');\n  if (!withinSkew(body.occurred_at, now)) return reject('stale_or_future_event');\n  const data = body.data;\n  if (!data || typeof data !== 'object') return reject('missing_data');\n  if (!text(data.symbol, SYMBOL, 32)) return reject('invalid_symbol');\n  if (data.setup_id !== undefined && data.setup_id !== null && !text(data.setup_id, SETUP_ID, 128))\n    return reject('invalid_setup_id');\n  if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return reject('token_claims_missing');\n  if (claims.exp - claims.iat > MAX_CLOCK_SKEW_SECONDS) return reject('token_lifetime_too_long');\n  if (claims.jti !== body.event_id) return reject('token_event_mismatch');\n  if (claims.evt !== body.event_type) return reject('token_type_mismatch');\n  const subject = data.setup_id || data.symbol;\n  if (claims.sub !== subject) return reject('token_subject_mismatch');\n  return {\n    valid: true,\n    reason: 'ok',\n    event_id: body.event_id,\n    event_type: body.event_type,\n    symbol: data.symbol,\n    setup_id: data.setup_id || null,\n    occurred_at: body.occurred_at,\n  };\n}\n\n// Maps an HTTP outcome to a retry class. Transient failures may recover; permanent ones never do\n// and are not retried. Anything unrecognised fails closed as `unknown`, which is not retried.\nfunction classifyStatus(status, code) {\n  if (status >= 200 && status < 300) return { classification: 'ok', error_code: null };\n  if (status === 429) return { classification: 'transient', error_code: 'RATE_LIMITED' };\n  if (status === 408 || status === 425) return { classification: 'transient', error_code: 'TIMEOUT' };\n  if (status === 502 || status === 503 || status === 504)\n    return { classification: 'transient', error_code: code || 'DEPENDENCY_UNAVAILABLE' };\n  if (status === 500) return { classification: 'transient', error_code: 'INTERNAL_ERROR' };\n  if (status >= 400 && status < 500)\n    return { classification: 'permanent', error_code: code || 'REQUEST_REJECTED' };\n  return { classification: 'unknown', error_code: code || 'UNEXPECTED_STATUS' };\n}\n\nconst SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;\n\n// Error codes leave PAWO already safe; anything else is reduced to a label. No message text,\n// stack trace, URL, header or credential is ever propagated.\nfunction safeCode(value, fallback) {\n  if (typeof value === 'string' && SAFE_ERROR_CODE.test(value)) return value;\n  return fallback;\n}\n\nfunction backoffSeconds(attempt, base, cap, retryAfter) {\n  if (typeof retryAfter === 'number' && retryAfter > 0) return Math.min(retryAfter, cap);\n  return Math.min(base * Math.pow(2, Math.max(0, attempt - 1)), cap);\n}\n\nfunction summaryOf(analysis) {\n  // Presentation only: counts and identifiers the deterministic response already contains.\n  const decisions = Array.isArray(analysis.decisions) ? analysis.decisions : [];\n  return {\n    analysis_id: analysis.analysis_id || null,\n    symbol: analysis.symbol || null,\n    status: analysis.status || null,\n    decision_count: decisions.length,\n    alertable: decisions.filter((d) => d.alertable === true).map((d) => d.setup_id),\n  };\n}\n\n// N8N-001 step 3: route to the AI interpretation only when PAWO itself marked a decision alertable,\n// and only when this environment enables it. The deterministic result stands on its own.\nconst call = $input.first().json;\nconst analysis = call.response || {};\nconst summary = summaryOf(analysis);\nconst enabled = 'true' === 'true';\nconst target = summary.alertable[0] || null;\nreturn [\n  {\n    json: {\n      interpret: enabled && target !== null,\n      method: 'POST',\n      path: '/api/v1/automation/interpretations',\n      body: { symbol: summary.symbol, setup_id: target },\n      idempotency_key: idempotencyKey(['n8n-001', 'interpretation', target || 'none']),\n      correlation_id: call.correlation_id,\n      workflow_id: 'N8N-001',\n      analysis: analysis,\n      analysis_summary: summary,\n    },\n  },\n];\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        1320,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "0389bf3e-7757-5d0f-b71b-c60911126f57",
+      "name": "Interpret?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "b0c5a916-81d5-56cc-8b06-d411b77b08b8",
+              "leftValue": "={{ $json.interpret }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      },
+      "position": [
+        1540,
+        0
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2
+    },
+    {
+      "id": "8426336c-be60-5272-9ea2-5539c2862779",
+      "name": "Run interpretation",
+      "parameters": {
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "pawoLibCall00001"
+        }
+      },
+      "position": [
+        1760,
+        0
+      ],
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3
+    },
+    {
+      "id": "ef8a7d02-b29d-5761-aa8f-bdc7073656a9",
+      "name": "Success response",
+      "parameters": {
+        "jsCode": "// PAWO n8n shared helpers (prepended to every Code node by `python -m pawo.automation.n8n build`).\n//\n// Orchestration only: identifiers, envelope validation, idempotency keys, error classification and\n// presentation. No ICT, SMC, SMT, CRT, price-action, confluence, risk or qualification logic \u2014 those\n// live in Python and reach the workflow only as deterministic fields of a PAWO response.\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst SYMBOL = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;\nconst SETUP_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;\nconst CORRELATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;\nconst MAX_EVENT_BYTES = 8192;\nconst MAX_CLOCK_SKEW_SECONDS = 300;\nconst EVENT_SCHEMA_VERSION = 'pawo-event-1';\n\n// The only paths any workflow may call. An SSRF guard: the host comes from configuration and the\n// path from this list, never from a payload.\nconst PAWO_PATHS = [\n  '/api/v1/automation/watchlist',\n  '/api/v1/automation/analyses',\n  '/api/v1/automation/setups/verify',\n  '/api/v1/automation/interpretations',\n  '/api/v1/automation/ledger/claims',\n  '/api/v1/automation/ledger/completions',\n  '/api/v1/automation/ledger/sweeps',\n  '/api/v1/automation/ledger/unresolved',\n  '/api/v1/automation/ledger/replays',\n  '/api/v1/automation/failures',\n  '/api/v1/automation/reports/daily',\n  '/api/v1/automation/outcomes/open',\n  '/api/v1/automation/outcomes/updates',\n  '/api/v1/automation/health',\n];\n\nfunction isUuid(value) {\n  return typeof value === 'string' && UUID.test(value);\n}\n\nfunction text(value, pattern, max) {\n  return typeof value === 'string' && value.length <= max && pattern.test(value);\n}\n\nfunction correlationId(supplied, fallback) {\n  // A caller-supplied id is used only after validation; it is for tracing, never authorization.\n  return text(supplied, CORRELATION, 128) ? supplied : `n8n-${fallback}`;\n}\n\nfunction bucket(when, minutes) {\n  const at = new Date(when);\n  const size = minutes * 60000;\n  return new Date(Math.floor(at.getTime() / size) * size).toISOString().replace(/[:.]/g, '-');\n}\n\nfunction idempotencyKey(parts) {\n  const key = parts.filter((p) => p !== null && p !== undefined && p !== '').join(':');\n  return key.slice(0, 200);\n}\n\nfunction withinSkew(occurredAt, now) {\n  const at = Date.parse(occurredAt);\n  if (Number.isNaN(at)) return false;\n  return Math.abs(new Date(now).getTime() - at) <= MAX_CLOCK_SKEW_SECONDS * 1000;\n}\n\n// Validates the documented envelope and its binding to the verified JWT. The token is already\n// signature- and expiry-checked by the Webhook node; this rejects an envelope the token does not\n// cover, and a token without the claims PAWO issues.\nfunction validateEnvelope(item, expectedType, now) {\n  const body = item.body;\n  const claims = item.jwtPayload || {};\n  const reject = (reason) => ({ valid: false, reason });\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('malformed_json');\n  if (JSON.stringify(body).length > MAX_EVENT_BYTES) return reject('payload_too_large');\n  if (body.schema_version !== EVENT_SCHEMA_VERSION) return reject('unsupported_schema_version');\n  if (!isUuid(body.event_id)) return reject('invalid_event_id');\n  if (body.event_type !== expectedType) return reject('unexpected_event_type');\n  if (!withinSkew(body.occurred_at, now)) return reject('stale_or_future_event');\n  const data = body.data;\n  if (!data || typeof data !== 'object') return reject('missing_data');\n  if (!text(data.symbol, SYMBOL, 32)) return reject('invalid_symbol');\n  if (data.setup_id !== undefined && data.setup_id !== null && !text(data.setup_id, SETUP_ID, 128))\n    return reject('invalid_setup_id');\n  if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return reject('token_claims_missing');\n  if (claims.exp - claims.iat > MAX_CLOCK_SKEW_SECONDS) return reject('token_lifetime_too_long');\n  if (claims.jti !== body.event_id) return reject('token_event_mismatch');\n  if (claims.evt !== body.event_type) return reject('token_type_mismatch');\n  const subject = data.setup_id || data.symbol;\n  if (claims.sub !== subject) return reject('token_subject_mismatch');\n  return {\n    valid: true,\n    reason: 'ok',\n    event_id: body.event_id,\n    event_type: body.event_type,\n    symbol: data.symbol,\n    setup_id: data.setup_id || null,\n    occurred_at: body.occurred_at,\n  };\n}\n\n// Maps an HTTP outcome to a retry class. Transient failures may recover; permanent ones never do\n// and are not retried. Anything unrecognised fails closed as `unknown`, which is not retried.\nfunction classifyStatus(status, code) {\n  if (status >= 200 && status < 300) return { classification: 'ok', error_code: null };\n  if (status === 429) return { classification: 'transient', error_code: 'RATE_LIMITED' };\n  if (status === 408 || status === 425) return { classification: 'transient', error_code: 'TIMEOUT' };\n  if (status === 502 || status === 503 || status === 504)\n    return { classification: 'transient', error_code: code || 'DEPENDENCY_UNAVAILABLE' };\n  if (status === 500) return { classification: 'transient', error_code: 'INTERNAL_ERROR' };\n  if (status >= 400 && status < 500)\n    return { classification: 'permanent', error_code: code || 'REQUEST_REJECTED' };\n  return { classification: 'unknown', error_code: code || 'UNEXPECTED_STATUS' };\n}\n\nconst SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;\n\n// Error codes leave PAWO already safe; anything else is reduced to a label. No message text,\n// stack trace, URL, header or credential is ever propagated.\nfunction safeCode(value, fallback) {\n  if (typeof value === 'string' && SAFE_ERROR_CODE.test(value)) return value;\n  return fallback;\n}\n\nfunction backoffSeconds(attempt, base, cap, retryAfter) {\n  if (typeof retryAfter === 'number' && retryAfter > 0) return Math.min(retryAfter, cap);\n  return Math.min(base * Math.pow(2, Math.max(0, attempt - 1)), cap);\n}\n\nfunction summaryOf(analysis) {\n  // Presentation only: counts and identifiers the deterministic response already contains.\n  const decisions = Array.isArray(analysis.decisions) ? analysis.decisions : [];\n  return {\n    analysis_id: analysis.analysis_id || null,\n    symbol: analysis.symbol || null,\n    status: analysis.status || null,\n    decision_count: decisions.length,\n    alertable: decisions.filter((d) => d.alertable === true).map((d) => d.setup_id),\n  };\n}\n\n// N8N-001 step 4: the synchronous response. It reports the deterministic result and, separately,\n// whether an AI interpretation was accepted. An AI failure never changes the analysis.\nconst item = $input.first().json;\nconst analysis = item.analysis || (item.response || {});\nconst interpretation = item.interpretation || null;\nreturn [\n  {\n    json: {\n      accepted: true,\n      correlation_id: item.correlation_id,\n      analysis: analysis,\n      summary: item.analysis_summary || summaryOf(analysis),\n      interpretation: interpretation\n        ? {\n            outcome: interpretation.outcome,\n            record_id: interpretation.record_id,\n            available: interpretation.outcome === 'ACCEPTED',\n          }\n        : { outcome: null, record_id: null, available: false },\n    },\n  },\n];\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        1980,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "eca3a11e-2be6-5849-9c56-e0c6053b17a7",
+      "name": "Failure response",
+      "parameters": {
+        "jsCode": "// PAWO n8n shared helpers (prepended to every Code node by `python -m pawo.automation.n8n build`).\n//\n// Orchestration only: identifiers, envelope validation, idempotency keys, error classification and\n// presentation. No ICT, SMC, SMT, CRT, price-action, confluence, risk or qualification logic \u2014 those\n// live in Python and reach the workflow only as deterministic fields of a PAWO response.\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst SYMBOL = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;\nconst SETUP_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;\nconst CORRELATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;\nconst MAX_EVENT_BYTES = 8192;\nconst MAX_CLOCK_SKEW_SECONDS = 300;\nconst EVENT_SCHEMA_VERSION = 'pawo-event-1';\n\n// The only paths any workflow may call. An SSRF guard: the host comes from configuration and the\n// path from this list, never from a payload.\nconst PAWO_PATHS = [\n  '/api/v1/automation/watchlist',\n  '/api/v1/automation/analyses',\n  '/api/v1/automation/setups/verify',\n  '/api/v1/automation/interpretations',\n  '/api/v1/automation/ledger/claims',\n  '/api/v1/automation/ledger/completions',\n  '/api/v1/automation/ledger/sweeps',\n  '/api/v1/automation/ledger/unresolved',\n  '/api/v1/automation/ledger/replays',\n  '/api/v1/automation/failures',\n  '/api/v1/automation/reports/daily',\n  '/api/v1/automation/outcomes/open',\n  '/api/v1/automation/outcomes/updates',\n  '/api/v1/automation/health',\n];\n\nfunction isUuid(value) {\n  return typeof value === 'string' && UUID.test(value);\n}\n\nfunction text(value, pattern, max) {\n  return typeof value === 'string' && value.length <= max && pattern.test(value);\n}\n\nfunction correlationId(supplied, fallback) {\n  // A caller-supplied id is used only after validation; it is for tracing, never authorization.\n  return text(supplied, CORRELATION, 128) ? supplied : `n8n-${fallback}`;\n}\n\nfunction bucket(when, minutes) {\n  const at = new Date(when);\n  const size = minutes * 60000;\n  return new Date(Math.floor(at.getTime() / size) * size).toISOString().replace(/[:.]/g, '-');\n}\n\nfunction idempotencyKey(parts) {\n  const key = parts.filter((p) => p !== null && p !== undefined && p !== '').join(':');\n  return key.slice(0, 200);\n}\n\nfunction withinSkew(occurredAt, now) {\n  const at = Date.parse(occurredAt);\n  if (Number.isNaN(at)) return false;\n  return Math.abs(new Date(now).getTime() - at) <= MAX_CLOCK_SKEW_SECONDS * 1000;\n}\n\n// Validates the documented envelope and its binding to the verified JWT. The token is already\n// signature- and expiry-checked by the Webhook node; this rejects an envelope the token does not\n// cover, and a token without the claims PAWO issues.\nfunction validateEnvelope(item, expectedType, now) {\n  const body = item.body;\n  const claims = item.jwtPayload || {};\n  const reject = (reason) => ({ valid: false, reason });\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('malformed_json');\n  if (JSON.stringify(body).length > MAX_EVENT_BYTES) return reject('payload_too_large');\n  if (body.schema_version !== EVENT_SCHEMA_VERSION) return reject('unsupported_schema_version');\n  if (!isUuid(body.event_id)) return reject('invalid_event_id');\n  if (body.event_type !== expectedType) return reject('unexpected_event_type');\n  if (!withinSkew(body.occurred_at, now)) return reject('stale_or_future_event');\n  const data = body.data;\n  if (!data || typeof data !== 'object') return reject('missing_data');\n  if (!text(data.symbol, SYMBOL, 32)) return reject('invalid_symbol');\n  if (data.setup_id !== undefined && data.setup_id !== null && !text(data.setup_id, SETUP_ID, 128))\n    return reject('invalid_setup_id');\n  if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return reject('token_claims_missing');\n  if (claims.exp - claims.iat > MAX_CLOCK_SKEW_SECONDS) return reject('token_lifetime_too_long');\n  if (claims.jti !== body.event_id) return reject('token_event_mismatch');\n  if (claims.evt !== body.event_type) return reject('token_type_mismatch');\n  const subject = data.setup_id || data.symbol;\n  if (claims.sub !== subject) return reject('token_subject_mismatch');\n  return {\n    valid: true,\n    reason: 'ok',\n    event_id: body.event_id,\n    event_type: body.event_type,\n    symbol: data.symbol,\n    setup_id: data.setup_id || null,\n    occurred_at: body.occurred_at,\n  };\n}\n\n// Maps an HTTP outcome to a retry class. Transient failures may recover; permanent ones never do\n// and are not retried. Anything unrecognised fails closed as `unknown`, which is not retried.\nfunction classifyStatus(status, code) {\n  if (status >= 200 && status < 300) return { classification: 'ok', error_code: null };\n  if (status === 429) return { classification: 'transient', error_code: 'RATE_LIMITED' };\n  if (status === 408 || status === 425) return { classification: 'transient', error_code: 'TIMEOUT' };\n  if (status === 502 || status === 503 || status === 504)\n    return { classification: 'transient', error_code: code || 'DEPENDENCY_UNAVAILABLE' };\n  if (status === 500) return { classification: 'transient', error_code: 'INTERNAL_ERROR' };\n  if (status >= 400 && status < 500)\n    return { classification: 'permanent', error_code: code || 'REQUEST_REJECTED' };\n  return { classification: 'unknown', error_code: code || 'UNEXPECTED_STATUS' };\n}\n\nconst SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;\n\n// Error codes leave PAWO already safe; anything else is reduced to a label. No message text,\n// stack trace, URL, header or credential is ever propagated.\nfunction safeCode(value, fallback) {\n  if (typeof value === 'string' && SAFE_ERROR_CODE.test(value)) return value;\n  return fallback;\n}\n\nfunction backoffSeconds(attempt, base, cap, retryAfter) {\n  if (typeof retryAfter === 'number' && retryAfter > 0) return Math.min(retryAfter, cap);\n  return Math.min(base * Math.pow(2, Math.max(0, attempt - 1)), cap);\n}\n\nfunction summaryOf(analysis) {\n  // Presentation only: counts and identifiers the deterministic response already contains.\n  const decisions = Array.isArray(analysis.decisions) ? analysis.decisions : [];\n  return {\n    analysis_id: analysis.analysis_id || null,\n    symbol: analysis.symbol || null,\n    status: analysis.status || null,\n    decision_count: decisions.length,\n    alertable: decisions.filter((d) => d.alertable === true).map((d) => d.setup_id),\n  };\n}\n\n// N8N-001: a typed failure response. It carries the PAWO error code and nothing else \u2014 no message\n// text, no upstream body, no credential.\nconst item = $input.first().json;\nconst invalid = item.valid === false;\nreturn [\n  {\n    json: {\n      accepted: false,\n      error: {\n        code: invalid ? 'INVALID_INPUT' : safeCode(item.error_code, 'DEPENDENCY_UNAVAILABLE'),\n        reason: invalid ? item.reason : null,\n        classification: invalid ? 'permanent' : item.classification,\n        correlation_id: item.correlation_id || null,\n      },\n      http_status: invalid ? 400 : item.http_status >= 400 ? item.http_status : 502,\n    },\n  },\n];\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        1320,
+        320
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "705ecc61-f1e2-57c0-82c4-15ed03309226",
+      "name": "Respond",
+      "parameters": {
+        "options": {
+          "responseCode": "200"
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "position": [
+        2200,
+        0
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5
+    },
+    {
+      "id": "9e931caa-3d30-5d1f-9129-e7a63965c527",
+      "name": "Respond failure",
+      "parameters": {
+        "options": {
+          "responseCode": "={{ $json.http_status }}"
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "position": [
+        1540,
+        320
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5
+    }
+  ],
+  "pinData": {},
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "pawoErrHandler01",
+    "executionOrder": "v1",
+    "executionTimeout": 600,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false,
+    "timezone": "UTC"
+  },
+  "tags": []
+}

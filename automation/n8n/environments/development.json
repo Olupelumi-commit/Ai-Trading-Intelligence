@@ -1,0 +1,24 @@
+{
+  "environment": "development",
+  "note": "No secret belongs in this file. Credential values live in the n8n credential store.",
+  "values": {
+    "__PAWO_API_BASE_URL__": "http://host.docker.internal:8000",
+    "__PAWO_ENVIRONMENT__": "development",
+    "__PAWO_TELEGRAM_CHAT_ID__": "0",
+    "__PAWO_N8N_HEALTH_URL__": "http://localhost:5678/healthz",
+    "__PAWO_TIMEZONE__": "UTC",
+    "__PAWO_SCAN_CRON__": "*/15 8-20 * * 1-5",
+    "__PAWO_REPORT_CRON__": "30 6 * * *",
+    "__PAWO_OUTCOME_CRON__": "0 7 * * *",
+    "__PAWO_WEBHOOK_PATH_ANALYSIS__": "pawo-analysis-dev",
+    "__PAWO_WEBHOOK_PATH_ALERT__": "pawo-alert-dev",
+    "__PAWO_ALERT_AI__": "false",
+    "__PAWO_MAX_ATTEMPTS__": "5",
+    "__PAWO_BACKOFF_SECONDS__": "2",
+    "__PAWO_REQUEST_TIMEOUT_MS__": "20000",
+    "__PAWO_CRED_API_ID__": "replace-with-the-n8n-credential-id",
+    "__PAWO_CRED_WEBHOOK_ID__": "replace-with-the-n8n-credential-id",
+    "__PAWO_CRED_TELEGRAM_ID__": "replace-with-the-n8n-credential-id",
+    "__PAWO_HEALTH_CRON__": "*/15 * * * *"
+  }
+}

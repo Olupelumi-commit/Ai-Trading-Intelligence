@@ -1,0 +1,210 @@
+{
+  "manifest_version": "1.0.0",
+  "schema_version": "pawo-n8n-1",
+  "generated_by": "python -m pawo.automation.n8n build",
+  "last_modified": "2026-09-17",
+  "phase": "Phase 8 \u2014 n8n and automation",
+  "pawo": {
+    "api_base_path": "/api/v1/automation",
+    "response_schema_version": "pawo-automation-2",
+    "event_schema_version": "pawo-event-1",
+    "strategy_version": "ICT_SMC_SMT_PA_CRT_v1.0",
+    "authentication": "workspace service credential in X-PAWO-Service-Credential (docs/30 A-6)",
+    "minimum_pawo_commit": "phase-9"
+  },
+  "n8n": {
+    "verified_release": "2.39.7",
+    "image": "docker.n8n.io/n8nio/n8n:2.39.7",
+    "image_digest": "sha256:54323be085a6086acd87f612a25752d6582d3a0c0b07cc93c2b40a9356c3203b",
+    "node_runtime": "v26.7.0 (in the image)",
+    "node_versions": {
+      "n8n-nodes-base.webhook": 2.1,
+      "n8n-nodes-base.code": 2,
+      "n8n-nodes-base.httpRequest": 4.5,
+      "n8n-nodes-base.scheduleTrigger": 1.2,
+      "n8n-nodes-base.if": 2.2,
+      "n8n-nodes-base.wait": 1.1,
+      "n8n-nodes-base.executeWorkflow": 1.3,
+      "n8n-nodes-base.executeWorkflowTrigger": 1.1,
+      "n8n-nodes-base.respondToWebhook": 1.5,
+      "n8n-nodes-base.telegram": 1.2,
+      "n8n-nodes-base.errorTrigger": 1,
+      "n8n-nodes-base.splitInBatches": 3,
+      "n8n-nodes-base.noOp": 1
+    },
+    "assumptions": [
+      "N8N_BLOCK_ENV_ACCESS_IN_NODE stays at its secure default (true): no Code node reads process.env, and configuration is rendered into the artifacts at deploy time instead.",
+      "Webhook JWT authentication verifies the HS256 signature and expiry; the workflow additionally requires iat/exp, a lifetime of at most five minutes and a token bound to the envelope.",
+      "The Authorization header of a webhook request is redacted from execution data by the runtime; execution data is pruned by the deployment settings in n8n.env.example.",
+      "Waits below 65 seconds are held in process, so the retry loops need no external queue.",
+      "Credentials are referenced by id and name only; their values live in the n8n credential store."
+    ]
+  },
+  "credentials": [
+    {
+      "name": "PAWO Automation API",
+      "type": "httpHeaderAuth",
+      "placeholder": "__PAWO_CRED_API_ID__",
+      "header": "X-PAWO-Service-Credential",
+      "value": "a workspace service credential from python -m pawo.automation.provision create"
+    },
+    {
+      "name": "PAWO Webhook JWT",
+      "type": "jwtAuth",
+      "placeholder": "__PAWO_CRED_WEBHOOK_ID__",
+      "algorithm": "HS256",
+      "value": "the shared webhook signing secret (at least 32 bytes)"
+    },
+    {
+      "name": "PAWO Telegram",
+      "type": "telegramApi",
+      "placeholder": "__PAWO_CRED_TELEGRAM_ID__",
+      "value": "the Telegram bot token"
+    }
+  ],
+  "workflows": [
+    {
+      "artifact": "PAWO-N8N-001-OnDemandAnalysis",
+      "catalogue_id": "N8N-001",
+      "title": "On-demand analysis",
+      "version": "1.0.0",
+      "trigger": "signed webhook (JWT) with a synchronous response",
+      "steps": [
+        "validate envelope and token binding",
+        "correlation id",
+        "idempotency key",
+        "PAWO analysis",
+        "optional AI interpretation",
+        "typed response"
+      ],
+      "error_workflow": "PAWO-N8N-ERR-ErrorHandler"
+    },
+    {
+      "artifact": "PAWO-N8N-002-ScheduledMarketScan",
+      "catalogue_id": "N8N-002",
+      "title": "Scheduled market scan",
+      "version": "1.0.0",
+      "trigger": "schedule (cron)",
+      "steps": [
+        "PAWO watchlist",
+        "bounded batches paced by PAWO",
+        "per-symbol analysis",
+        "route PAWO's alertable setups to N8N-003",
+        "failure summary"
+      ],
+      "error_workflow": "PAWO-N8N-ERR-ErrorHandler"
+    },
+    {
+      "artifact": "PAWO-N8N-003-SetupAlert",
+      "catalogue_id": "N8N-003",
+      "title": "Setup alert",
+      "version": "1.0.0",
+      "trigger": "signed webhook (acknowledged on receipt) or N8N-002",
+      "steps": [
+        "re-verify the setup with PAWO",
+        "claim the one delivery",
+        "Telegram",
+        "record the outcome"
+      ],
+      "error_workflow": "PAWO-N8N-ERR-ErrorHandler"
+    },
+    {
+      "artifact": "PAWO-N8N-004-OutcomeUpdate",
+      "catalogue_id": "N8N-004",
+      "title": "Outcome update",
+      "version": "1.1.0",
+      "trigger": "schedule (cron)",
+      "steps": [
+        "ask PAWO which paper trades can still advance",
+        "ask PAWO to advance each one",
+        "summarise what PAWO answered"
+      ],
+      "error_workflow": "PAWO-N8N-ERR-ErrorHandler"
+    },
+    {
+      "artifact": "PAWO-N8N-005-DailyReport",
+      "catalogue_id": "N8N-005",
+      "title": "Daily report",
+      "version": "1.0.0",
+      "trigger": "schedule (cron)",
+      "steps": [
+        "PAWO daily aggregation",
+        "presentation formatting only",
+        "claimed Telegram delivery"
+      ],
+      "error_workflow": "PAWO-N8N-ERR-ErrorHandler"
+    },
+    {
+      "artifact": "PAWO-N8N-006-HealthCheck",
+      "catalogue_id": "N8N-006",
+      "title": "Health check",
+      "version": "1.0.0",
+      "trigger": "schedule (cron)",
+      "steps": [
+        "PAWO dependency report",
+        "n8n health",
+        "sweep abandoned claims",
+        "unresolved records",
+        "Telegram probe",
+        "escalation"
+      ],
+      "error_workflow": "PAWO-N8N-ERR-ErrorHandler"
+    },
+    {
+      "artifact": "PAWO-N8N-LIB-PawoCall",
+      "catalogue_id": null,
+      "title": "PAWO call library",
+      "version": "1.0.0",
+      "trigger": "called by every workflow",
+      "steps": [
+        "bounded attempts",
+        "exponential backoff honouring Retry-After",
+        "transient/permanent/unknown classification"
+      ],
+      "error_workflow": null
+    },
+    {
+      "artifact": "PAWO-N8N-LIB-PawoAttempt",
+      "catalogue_id": null,
+      "title": "PAWO attempt library",
+      "version": "1.0.0",
+      "trigger": "called by PAWO-N8N-LIB-PawoCall",
+      "steps": [
+        "path allowlist",
+        "header-auth credential",
+        "correlation and idempotency headers",
+        "typed classification"
+      ],
+      "error_workflow": null
+    },
+    {
+      "artifact": "PAWO-N8N-ERR-ErrorHandler",
+      "catalogue_id": null,
+      "title": "Shared error handler",
+      "version": "1.0.0",
+      "trigger": "error trigger of every catalogue workflow",
+      "steps": [
+        "safe error code",
+        "audit record in PAWO",
+        "sweep abandoned claims",
+        "one claimed operator notification"
+      ],
+      "error_workflow": null
+    }
+  ],
+  "operations": {
+    "ANALYSIS": "N8N-001, N8N-002 \u2014 one deterministic analysis per idempotency key",
+    "INTERPRETATION": "N8N-001 \u2014 one AI interpretation per setup",
+    "ALERT_DELIVERY": "N8N-003 \u2014 one setup notification per setup",
+    "REPORT_DELIVERY": "N8N-005 \u2014 one report per report date",
+    "HEALTH_ALERT": "N8N-002, N8N-006 and the error handler \u2014 one operational notification per bucket or execution",
+    "OUTCOME_UPDATE": "N8N-004 \u2014 one paper-trade entry per setup and one tick per trade and bar (Phase 9)"
+  },
+  "known_limitations": [
+    "Paper trading is PAWO's: N8N-004 asks PAWO to advance each trade and computes no price, state or outcome. Its dependency branch reports the typed reason where paper trading is switched off.",
+    "No paper trade is created automatically: creation is an explicit call for a verified setup, and no workflow makes it.",
+    "The daily report carries no AI narrative: no verifier for report prose exists, and inventing statistics is forbidden.",
+    "Telegram is the only notification channel; email is documented in docs/15 but not implemented.",
+    "Rate limits and the retry state are per PAWO process and per n8n instance."
+  ]
+}
